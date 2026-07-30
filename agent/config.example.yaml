@@ -1,0 +1,51 @@
+# Copy to config.yaml and fill in values.
+# Secrets can also come from environment variables / .env
+
+# Optional — only needed when mail.backend is "graph"
+azure:
+  client_id: ""
+  authority: "https://login.microsoftonline.com/common"
+  scopes:
+    - "https://graph.microsoft.com/Mail.Read"
+
+mail:
+  # Default: Apple Mail (free, no Microsoft 365)
+  # Alternatives: "mac" (classic Outlook, needs M365), "graph" (Azure app)
+  backend: apple_mail
+  sender_keywords:
+    - ainews
+    - "ai news"
+    - alphasignal
+    - alpha signal
+  lookback_hours: 36
+  max_messages: 50
+  max_body_chars: 12000
+  # How many newest inbox messages to scan before keyword filter
+  mac_scan_limit: 100
+
+llm:
+  # Env overrides: OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+  api_key: ""
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-v4-flash"
+  temperature: 0.2
+  max_tokens: 4000
+
+categories:
+  - LLM
+  - VLM
+  - Agent
+  - Image Model
+  - Video Model
+  - Other
+
+git:
+  repo_root: ""
+  remote: "origin"
+  branch: "main"
+  commit_prefix: "digest"
+  push: true
+
+schedule:
+  hour: 9
+  minute: 0

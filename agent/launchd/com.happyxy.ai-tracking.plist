@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Install:
+    1. Edit REPO_ROOT below to your clone path (or use install_launchd.sh).
+    2. cp agent/launchd/com.happyxy.ai-tracking.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.happyxy.ai-tracking.plist
+
+  Unload:
+    launchctl unload ~/Library/LaunchAgents/com.happyxy.ai-tracking.plist
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.happyxy.ai-tracking</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>__REPO_ROOT__/agent/run.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>9</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+
+    <!-- Also run shortly after login if the machine was off at 09:00 -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/ai-tracking.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/ai-tracking.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+  </dict>
+</plist>
