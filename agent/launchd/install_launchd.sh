@@ -24,7 +24,7 @@ fi
 launchctl load "$PLIST_DST"
 
 echo "Installed $PLIST_DST"
-echo "Schedule: daily 09:00 local time"
+echo "Schedule: daily 11:00 local time"
 echo "Logs: ${HOME}/Library/Logs/ai-tracking.log"
 echo "Manual run: $REPO_ROOT/agent/run.sh"
 echo "Unload: launchctl unload $PLIST_DST"

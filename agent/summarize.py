@@ -8,17 +8,16 @@ from typing import Any
 import httpx
 
 from mail_common import MailMessage
+from monthly import DEFAULT_CATEGORIES, parse_category_bullets
 
 SYSTEM_PROMPT = """You are an AI research digest editor.
-Given one or more newsletter emails about AI progress, produce a Markdown digest.
+Given one or more newsletter emails about AI progress, produce a Markdown fragment
+that will be merged into a monthly tracking file.
 
 Rules:
 1. Output ONLY Markdown. No preamble or code fences.
-2. Start with exactly:
-   # AI Digest — {date}
-   then a blank line, then:
-   Sources: {sources}
-3. Then use ONLY these section headings (omit any section with no items):
+2. Do NOT include a top-level # title. Do NOT include a Sources line.
+3. Use ONLY these section headings (omit any section with no items):
    ## LLM
    ## VLM
    ## Agent
@@ -31,6 +30,7 @@ Rules:
 5. Deduplicate overlapping items across emails. Prefer specific model/product names.
 6. Ignore ads, unsubscribe noise, and pure marketing fluff without technical substance.
 7. Write in the same language as the majority of the source content (English newsletters → English).
+8. Do not add dates in bullets; the pipeline tags the day automatically.
 """
 
 
@@ -49,27 +49,34 @@ def _build_user_payload(messages: list[MailMessage], day: date) -> str:
     return "\n".join(parts)
 
 
-def _fallback_digest(messages: list[MailMessage], day: date) -> str:
-    sources = sorted({m.source_label for m in messages if m.source_label != "Unknown"})
-    lines = [
-        f"# AI Digest — {day.isoformat()}",
-        "",
-        f"Sources: {', '.join(sources) if sources else 'newsletter'}",
-        "",
-        "## Other",
-    ]
+def _fallback_sections(messages: list[MailMessage]) -> dict[str, list[str]]:
+    bullets = []
     for msg in messages:
         link = f" — {msg.web_link}" if msg.web_link else ""
-        lines.append(f"- **{msg.source_label}**: {msg.subject}{link}")
-    lines.append("")
-    return "\n".join(lines)
+        bullets.append(f"**{msg.source_label}**: {msg.subject}{link}")
+    return {c: [] for c in DEFAULT_CATEGORIES} | {"Other": bullets}
 
 
-def summarize(messages: list[MailMessage], cfg: dict[str, Any], day: date | None = None) -> str:
+def _normalize_llm_markdown(content: str) -> str:
+    content = content.strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.startswith("markdown"):
+            content = content[len("markdown") :].lstrip()
+    return content.strip() + ("\n" if not content.endswith("\n") else "")
+
+
+def summarize_sections(
+    messages: list[MailMessage],
+    cfg: dict[str, Any],
+    day: date | None = None,
+) -> dict[str, list[str]]:
+    """Return {category: [bullet texts]} for today's emails."""
     if not messages:
         raise ValueError("No messages to summarize")
 
     day = day or date.today()
+    categories = cfg.get("categories") or list(DEFAULT_CATEGORIES)
     llm = cfg.get("llm") or {}
     api_key = (llm.get("api_key") or "").strip()
     base_url = (llm.get("base_url") or "https://api.openai.com/v1").rstrip("/")
@@ -77,25 +84,10 @@ def summarize(messages: list[MailMessage], cfg: dict[str, Any], day: date | None
     temperature = float(llm.get("temperature") if llm.get("temperature") is not None else 0.2)
     max_tokens = int(llm.get("max_tokens") or 4000)
 
-    categories = cfg.get("categories") or [
-        "LLM",
-        "VLM",
-        "Agent",
-        "Image Model",
-        "Video Model",
-        "Other",
-    ]
-    sources = sorted({m.source_label for m in messages if m.source_label != "Unknown"})
-    system = SYSTEM_PROMPT.format(
-        date=day.isoformat(),
-        sources=", ".join(sources) if sources else "AINews, AlphaSignal",
-    )
-    # Remind model of allowed headings from config
-    system += "\nAllowed headings: " + ", ".join(f"## {c}" for c in categories)
-
     if not api_key:
-        return _fallback_digest(messages, day)
+        return _fallback_sections(messages)
 
+    system = SYSTEM_PROMPT + "\nAllowed headings: " + ", ".join(f"## {c}" for c in categories)
     payload = {
         "model": model,
         "temperature": temperature,
@@ -105,7 +97,6 @@ def summarize(messages: list[MailMessage], cfg: dict[str, Any], day: date | None
             {"role": "user", "content": _build_user_payload(messages, day)},
         ],
     }
-
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -117,24 +108,29 @@ def summarize(messages: list[MailMessage], cfg: dict[str, Any], day: date | None
         data = resp.json()
 
     try:
-        content = data["choices"][0]["message"]["content"].strip()
+        content = _normalize_llm_markdown(data["choices"][0]["message"]["content"])
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"Unexpected LLM response: {data}") from exc
 
-    # Strip accidental fences
-    if content.startswith("```"):
-        content = content.strip("`")
-        if content.startswith("markdown"):
-            content = content[len("markdown") :].lstrip()
+    sections = parse_category_bullets(content, categories)
+    if not any(sections.values()):
+        # Model returned unexpected shape — fall back
+        return _fallback_sections(messages)
+    return sections
 
-    if not content.startswith("#"):
-        # Soft recover: prepend title if model skipped it
-        header = (
-            f"# AI Digest — {day.isoformat()}\n\n"
-            f"Sources: {', '.join(sources) if sources else 'AINews, AlphaSignal'}\n\n"
-        )
-        content = header + content
 
-    if not content.endswith("\n"):
-        content += "\n"
-    return content
+def summarize(messages: list[MailMessage], cfg: dict[str, Any], day: date | None = None) -> str:
+    """Backward-compatible: return a day fragment Markdown (sections only)."""
+    sections = summarize_sections(messages, cfg, day=day)
+    categories = cfg.get("categories") or list(DEFAULT_CATEGORIES)
+    lines: list[str] = []
+    for cat in categories:
+        bullets = sections.get(cat) or []
+        if not bullets:
+            continue
+        lines.append(f"## {cat}")
+        lines.append("")
+        for b in bullets:
+            lines.append(f"- {b}")
+        lines.append("")
+    return ("\n".join(lines).rstrip() + "\n") if lines else "## Other\n\n- (no items)\n"

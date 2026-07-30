@@ -47,5 +47,5 @@ git:
   push: true
 
 schedule:
-  hour: 9
+  hour: 11
   minute: 0

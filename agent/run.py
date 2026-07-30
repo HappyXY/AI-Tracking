@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Daily AI Tracking runner: Outlook → LLM digest → git publish."""
+"""Daily AI Tracking runner: Mail → LLM digest → monthly Markdown → git publish."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -14,13 +15,13 @@ if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
 from outlook import fetch_messages, save_processed  # noqa: E402
-from paths import ensure_dirs, load_config  # noqa: E402
-from publish import publish  # noqa: E402
-from summarize import summarize  # noqa: E402
+from paths import PROCESSED_PATH, ensure_dirs, load_config  # noqa: E402
+from publish import build_monthly_markdown, publish, write_digest  # noqa: E402
+from summarize import summarize_sections  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Fetch AI newsletters and publish a daily digest")
+    p = argparse.ArgumentParser(description="Fetch AI newsletters and publish a monthly digest")
     p.add_argument(
         "--date",
         type=str,
@@ -30,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch + summarize, print Markdown, skip git publish and processed-state update",
+        help="Fetch + summarize, print merged monthly Markdown, skip git and processed-state",
     )
     p.add_argument(
         "--no-push",
@@ -40,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip-git",
         action="store_true",
-        help="Write digest file only; no commit/push",
+        help="Write monthly digest file only; no commit/push",
     )
     p.add_argument(
         "--config",
@@ -69,31 +70,25 @@ def main() -> int:
     for m in messages:
         print(f"  - [{m.source_label}] {m.subject}")
 
-    markdown = summarize(messages, cfg, day=day)
+    sections = summarize_sections(messages, cfg, day=day)
+    repo_root = Path((cfg.get("git") or {}).get("repo_root") or AGENT_DIR.parent)
+    monthly_md = build_monthly_markdown(repo_root, day, sections, cfg)
 
     if args.dry_run:
-        print("\n----- digest (dry-run) -----\n")
-        print(markdown)
+        print(f"\n----- monthly digest preview (digest/{day.year:04d}-{day.month:02d}.md) -----\n")
+        print(monthly_md)
         return 0
 
-    repo_root = Path((cfg.get("git") or {}).get("repo_root") or AGENT_DIR.parent)
-
     if args.skip_git:
-        from publish import write_digest
-
-        path = write_digest(repo_root, day, markdown)
+        path = write_digest(repo_root, day, sections, cfg)
         print(f"Wrote {path}")
     else:
         if args.no_push:
             cfg.setdefault("git", {})["push"] = False
-        path = publish(repo_root, day, markdown, cfg)
+        path = publish(repo_root, day, sections, cfg)
         print(f"Digest at {path}")
 
     # Mark as processed only after successful write/publish
-    import json
-
-    from paths import PROCESSED_PATH
-
     ids = {m.internet_message_id or m.id for m in messages}
     existing: set[str] = set()
     if PROCESSED_PATH.exists():
